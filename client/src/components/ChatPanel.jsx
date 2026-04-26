@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { avatarFor, initialsOf } from '../lib/avatar.js';
 
 export default function ChatPanel({ socket, me }) {
   const [messages, setMessages] = useState([]);
@@ -38,7 +39,7 @@ export default function ChatPanel({ socket, me }) {
         )}
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0 scrollbar-thin">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2.5 min-h-0 scrollbar-thin">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4 py-8">
             <div className="w-10 h-10 rounded-full bg-surface-700 flex items-center justify-center mb-3">
@@ -50,17 +51,27 @@ export default function ChatPanel({ socket, me }) {
             <p className="text-surface-500/60 text-[11px] mt-0.5">Be the first to say hi 👋</p>
           </div>
         ) : (
-          messages.map((m) => {
+          messages.map((m, idx) => {
             const mine = me && m.from.id === me.id;
+            const prev = messages[idx - 1];
+            const sameSender = prev && prev.from.id === m.from.id;
+            const av = avatarFor(m.from.id);
             return (
-              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-                <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 ${
+              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'} gap-2 animate-fade-in ${sameSender ? 'mt-0.5' : 'mt-2'}`}>
+                {!mine && (
+                  <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-white ${sameSender ? 'invisible' : ''}`}
+                    style={{ background: av.gradient }}
+                  >
+                    {initialsOf(m.from.name)}
+                  </div>
+                )}
+                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2 ${
                   mine
                     ? 'bg-brand-500 text-white rounded-br-md'
                     : 'bg-surface-700 text-white rounded-bl-md'
                 }`}>
-                  {!mine && (
-                    <div className="text-[10px] font-medium text-surface-500 mb-0.5">{m.from.name}</div>
+                  {!mine && !sameSender && (
+                    <div className="text-[10px] font-semibold text-surface-300/80 mb-0.5">{m.from.name}</div>
                   )}
                   <div className="text-sm whitespace-pre-wrap break-words leading-relaxed">{m.text}</div>
                 </div>

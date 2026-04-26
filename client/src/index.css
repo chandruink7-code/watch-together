@@ -9,14 +9,13 @@ html, body, #root {
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background-color: #0a0a0c;
-  /* Subtle vignette + radial glow for cinematic depth */
   background-image:
     radial-gradient(ellipse 1200px 600px at 50% -20%, rgba(229, 9, 20, 0.12), transparent 60%),
     radial-gradient(ellipse 800px 400px at 90% 100%, rgba(229, 9, 20, 0.06), transparent 60%);
   background-attachment: fixed;
+  overflow-x: hidden;
 }
 
-/* Subtle film grain overlay for cinematic texture */
 body::before {
   content: '';
   position: fixed;
@@ -31,9 +30,10 @@ body::before {
 #root {
   position: relative;
   z-index: 2;
+  min-height: 100%;
 }
 
-/* Custom range styling for the seek bar — Netflix red */
+/* ───── Custom range: seek bar ───── */
 input[type="range"].seek {
   -webkit-appearance: none;
   appearance: none;
@@ -45,9 +45,7 @@ input[type="range"].seek {
   cursor: pointer;
   transition: height 0.15s ease;
 }
-input[type="range"].seek:hover {
-  height: 6px;
-}
+input[type="range"].seek:hover { height: 6px; }
 input[type="range"].seek::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -60,9 +58,7 @@ input[type="range"].seek::-webkit-slider-thumb {
   box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
   transition: transform 0.15s ease;
 }
-input[type="range"].seek:hover::-webkit-slider-thumb {
-  transform: scale(1.2);
-}
+input[type="range"].seek:hover::-webkit-slider-thumb { transform: scale(1.2); }
 input[type="range"].seek::-moz-range-thumb {
   width: 14px;
   height: 14px;
@@ -73,7 +69,7 @@ input[type="range"].seek::-moz-range-thumb {
   box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
 }
 
-/* Volume slider — smaller, subtler */
+/* ───── Custom range: volume ───── */
 input[type="range"].volume {
   -webkit-appearance: none;
   appearance: none;
@@ -101,41 +97,80 @@ input[type="range"].volume::-moz-range-thumb {
   cursor: pointer;
 }
 
-/* Custom scrollbar for chat panel */
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-}
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* ───── Scrollbar ───── */
+.scrollbar-thin::-webkit-scrollbar { width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: #3a3a44;
   border-radius: 9999px;
 }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #4a4a54;
-}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #4a4a54; }
 
-/* Subtle gradient border helper */
-.border-gradient {
-  position: relative;
-  background-clip: padding-box;
-}
-.border-gradient::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 1px;
-  border-radius: inherit;
-  background: linear-gradient(135deg, rgba(229, 9, 20, 0.4), rgba(229, 9, 20, 0));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-/* Display heading utility */
+/* ───── Display heading ───── */
 .display {
   font-family: 'Bebas Neue', system-ui, sans-serif;
   letter-spacing: 0.02em;
+}
+
+/* ───── Animations ───── */
+@keyframes float-up {
+  0% {
+    transform: translateY(0) translateX(0) scale(0.8);
+    opacity: 0;
+  }
+  10% {
+    transform: translateY(-20px) translateX(0) scale(1.2);
+    opacity: 1;
+  }
+  20% {
+    transform: translateY(-60px) translateX(calc(var(--drift, 0px) * 0.2)) scale(1);
+  }
+  100% {
+    transform: translateY(-100vh) translateX(var(--drift, 0px)) scale(0.7);
+    opacity: 0;
+  }
+}
+
+@keyframes slide-in-right {
+  0% { opacity: 0; transform: translateX(20px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s cubic-bezier(.34,1.56,.64,1);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1d1d23 0%, #26262e 50%, #1d1d23 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 30px -5px rgba(229, 9, 20, 0.4); }
+  50% { box-shadow: 0 0 50px -5px rgba(229, 9, 20, 0.7); }
+}
+.animate-glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+/* Hero carousel ken-burns effect */
+@keyframes ken-burns {
+  0% { transform: scale(1.05) translate(0, 0); }
+  100% { transform: scale(1.15) translate(-2%, -2%); }
+}
+.animate-ken-burns {
+  animation: ken-burns 20s ease-in-out infinite alternate;
+}
+
+/* Hide scrollbar entirely on the carousel */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Cinema mode body lock */
+body.cinema-mode {
+  overflow: hidden;
 }

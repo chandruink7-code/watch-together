@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react';
+import { avatarFor, initialsOf } from '../lib/avatar.js';
 
-function PeerMedia({ stream, name }) {
+function PeerMedia({ peerId, stream, name }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current && stream) ref.current.srcObject = stream;
   }, [stream]);
 
   const hasVideo = stream && stream.getVideoTracks().some((t) => t.enabled !== false);
-  const initials = name ? name.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase() : '?';
+  const av = avatarFor(peerId);
 
   return (
     <div className="bg-surface-800 rounded-xl overflow-hidden relative aspect-video flex items-center justify-center border border-surface-700/60">
@@ -18,9 +19,12 @@ function PeerMedia({ stream, name }) {
         className={`w-full h-full object-cover ${hasVideo ? '' : 'hidden'}`}
       />
       {!hasVideo && (
-        <div className="flex flex-col items-center gap-1.5 text-surface-500">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-sm font-semibold text-white shadow-brand-glow-sm">
-            {initials}
+        <div className="flex flex-col items-center gap-1.5">
+          <div
+            className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-md"
+            style={{ background: av.gradient }}
+          >
+            {initialsOf(name)}
           </div>
         </div>
       )}
@@ -120,7 +124,7 @@ export default function CallPanel({
 
           <div className="grid grid-cols-2 gap-2">
             {peers.map((p) => (
-              <PeerMedia key={p.id} name={p.name} stream={remoteStreams[p.id]} />
+              <PeerMedia key={p.id} peerId={p.id} name={p.name} stream={remoteStreams[p.id]} />
             ))}
             {peers.length === 0 && (
               <div className="col-span-2 text-center text-surface-500 text-xs py-6 bg-surface-800/50 rounded-xl border border-dashed border-surface-700">

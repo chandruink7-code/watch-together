@@ -206,6 +206,21 @@ io.on('connection', (socket) => {
     });
   });
 
+  /* ---------------------- REACTIONS ---------------------- */
+  // Floating emoji reactions overlaid on the video. Pure relay — clients
+  // animate the emoji floating up; we just forward the trigger.
+  socket.on('reaction:send', ({ emoji }) => {
+    if (!socket.data.roomId || !socket.data.user) return;
+    const allowed = ['❤️', '😂', '👏', '🔥', '😮', '😢', '🍿', '🎬'];
+    if (!allowed.includes(emoji)) return;
+    io.to(socket.data.roomId).emit('reaction:send', {
+      id: nanoid(6),
+      from: socket.data.user,
+      emoji,
+      ts: Date.now(),
+    });
+  });
+
   /* ---------------------- DISCONNECT ---------------------- */
 
   socket.on('disconnect', (reason) => {
