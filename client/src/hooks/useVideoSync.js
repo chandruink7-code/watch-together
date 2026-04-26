@@ -2,71 +2,60 @@ import { useEffect, useRef, useCallback } from 'react';
 import { HEARTBEAT_INTERVAL_MS } from '../config.js';
 
 /**
- * useVideoSync
- * ---------------------------------------------------------------
- * SYNCED EVENTS (MVP surface):
- *   - play
- *   - pause
- *   - seek
- *   - drift correction (gentle, every 3s)
+ * useVideoSync — hardened against play/pause echo loops.
  *
- * NOT SYNCED:
- *   - buffering / waiting / canplay / ready
+ * The previous version used a boolean ref + microtask to suppress
+ * echoes. That broke for `video.play()` because Chrome fires the
+ * 'play' event AFTER the play() promise resolves, which is later
+ * than our microtask. Result: each remote-triggered play caused a
+ * local re-emit, creating a feedback loop.
  *
- * IMPORTANT — DRIFT CORRECTION TUNING
- * The previous version corrected at >0.3s drift and ran on every
- * heartbeat. With two tabs on the same machine sharing CPU, one tab
- * is always ~0.3s ahead, so every heartbeat triggered a re-seek —
- * and setting `video.currentTime` makes the decoder re-buffer that
- * position, which is visible as a stop every few seconds.
- *
- * Fixes:
- *   1. Raised threshold to 1.0s (still feels in-sync to viewers).
- *   2. Cooldown of 5s between corrections so we never re-seek twice
- *      in a row.
- *   3. Skip correction for 2s after any explicit action event —
- *      play/pause/seek already aligned us, no need to "fix" it.
- *   4. Only correct when both peers agree on the play/pause state.
+ * Fix: time-based suppression window (300ms) + per-action dedup
+ * by sender timestamp. The window is long enough to swallow the
+ * play/pause/seeked event the browser fires from our own DOM call,
+ * but short enough to not block legitimate user actions.
  */
 
-// Tunables for drift correction.
-const DRIFT_THRESHOLD_SEC = 1.0;       // > 1s drift triggers correction
-const DRIFT_COOLDOWN_MS = 5000;        // min gap between corrections
-const ACTION_GRACE_MS = 2000;          // don't correct for 2s after a remote action
+const DRIFT_THRESHOLD_SEC = 1.0;
+const DRIFT_COOLDOWN_MS = 5000;
+const ACTION_GRACE_MS = 2000;
+const SUPPRESS_WINDOW_MS = 300;   // ignore local events for 300ms after applying remote
 
 export default function useVideoSync({ socket, videoRef, hasVideo }) {
-  // When true, the next play/pause/seek event came from the network
-  // and should NOT be re-emitted.
-  const applyingRemoteRef = useRef(false);
+  // Time-based suppression. While Date.now() < suppressUntilRef.current,
+  // any local play/pause/seek event is treated as an echo and dropped.
+  const suppressUntilRef = useRef(0);
 
-  // Throttle for outgoing seek emits (rapid scrubs).
+  // Throttle for outgoing seek emits.
   const lastSeekEmitRef = useRef(0);
 
-  // Drift correction bookkeeping.
-  const lastDriftCorrectionRef = useRef(0);  // when we last seeked due to drift
-  const lastActionAppliedRef = useRef(0);    // when we last applied a remote action
+  // Bookkeeping for drift correction.
+  const lastDriftCorrectionRef = useRef(0);
+  const lastActionAppliedRef = useRef(0);
 
-  /** Emit a sync action to peers. */
-  const emitAction = useCallback((action, extra = {}) => {
-    if (!socket || !videoRef.current) return;
-    socket.emit('video:action', {
-      action,
-      currentTime: videoRef.current.currentTime,
-      ...extra,
-    });
-  }, [socket, videoRef]);
+  // Track our own most recent emit so we can dedupe echoes that arrive
+  // back at us via the server (shouldn't happen with socket.io rooms,
+  // but defensive).
+  const lastEmitSignatureRef = useRef('');
 
-  /** Wrap remote application so we don't echo. */
-  const applyRemote = useCallback((fn) => {
-    applyingRemoteRef.current = true;
-    try {
-      fn();
-    } finally {
-      Promise.resolve().then(() => {
-        applyingRemoteRef.current = false;
-      });
-    }
+  const suppressNext = useCallback((ms = SUPPRESS_WINDOW_MS) => {
+    suppressUntilRef.current = Date.now() + ms;
   }, []);
+
+  const isSuppressed = () => Date.now() < suppressUntilRef.current;
+
+  const emitAction = useCallback((action) => {
+    if (!socket || !videoRef.current) return;
+    const currentTime = videoRef.current.currentTime;
+    // Don't emit if we just emitted the same thing < 100ms ago.
+    const sig = `${action}:${currentTime.toFixed(2)}`;
+    if (sig === lastEmitSignatureRef.current &&
+        Date.now() - lastSeekEmitRef.current < 100) {
+      return;
+    }
+    lastEmitSignatureRef.current = sig;
+    socket.emit('video:action', { action, currentTime });
+  }, [socket, videoRef]);
 
   /* -------------------- Local -> Remote -------------------- */
   useEffect(() => {
@@ -74,17 +63,17 @@ export default function useVideoSync({ socket, videoRef, hasVideo }) {
     if (!video || !socket) return;
 
     const onPlay = () => {
-      if (applyingRemoteRef.current) return;
+      if (isSuppressed()) return;
       emitAction('play');
     };
     const onPause = () => {
-      if (applyingRemoteRef.current) return;
+      if (isSuppressed()) return;
       emitAction('pause');
     };
     const onSeeked = () => {
-      if (applyingRemoteRef.current) return;
+      if (isSuppressed()) return;
       const now = Date.now();
-      if (now - lastSeekEmitRef.current < 100) return; // throttle
+      if (now - lastSeekEmitRef.current < 200) return;
       lastSeekEmitRef.current = now;
       emitAction('seek');
     };
@@ -108,36 +97,50 @@ export default function useVideoSync({ socket, videoRef, hasVideo }) {
       const video = videoRef.current;
       if (!video) return;
 
-      // Mark that we just applied an action — drift correction will
-      // skip itself for a couple of seconds afterwards.
       lastActionAppliedRef.current = Date.now();
 
+      // Open suppression window BEFORE we touch the video element.
+      // Any play/pause/seeked event the browser fires from our DOM
+      // call within 300ms will be ignored.
+      suppressNext(SUPPRESS_WINDOW_MS);
+
       switch (action) {
-        case 'play':
-          // Snap to peer's time before resuming, but only if the gap
-          // is meaningful — avoid micro-seeks.
+        case 'play': {
           if (typeof currentTime === 'number' &&
               Math.abs(video.currentTime - currentTime) > DRIFT_THRESHOLD_SEC) {
-            applyRemote(() => { video.currentTime = currentTime; });
+            video.currentTime = currentTime;
           }
-          applyRemote(() => {
-            video.play().catch(() => {/* autoplay block — user must click */});
-          });
+          // Only call play() if currently paused — calling on already-playing
+          // video can re-fire the play event in some browsers.
+          if (video.paused) {
+            const p = video.play();
+            // Extend suppression until the play promise resolves, since
+            // Chrome fires the 'play' event right around then.
+            if (p && typeof p.then === 'function') {
+              p.then(() => suppressNext(150)).catch(() => {});
+            }
+          }
           break;
+        }
 
-        case 'pause':
-          applyRemote(() => { video.pause(); });
+        case 'pause': {
+          if (!video.paused) {
+            video.pause();
+          }
           if (typeof currentTime === 'number' &&
               Math.abs(video.currentTime - currentTime) > 0.5) {
-            applyRemote(() => { video.currentTime = currentTime; });
+            video.currentTime = currentTime;
           }
           break;
+        }
 
-        case 'seek':
-          if (typeof currentTime === 'number') {
-            applyRemote(() => { video.currentTime = currentTime; });
+        case 'seek': {
+          if (typeof currentTime === 'number' &&
+              Math.abs(video.currentTime - currentTime) > 0.1) {
+            video.currentTime = currentTime;
           }
           break;
+        }
 
         default:
           break;
@@ -149,23 +152,19 @@ export default function useVideoSync({ socket, videoRef, hasVideo }) {
       if (!video) return;
       if (typeof currentTime !== 'number') return;
 
-      // Both peers must be in the same play/pause state. If they're
-      // not, an action event is already in flight — let it handle it.
       const localIsPlaying = !video.paused;
       if (localIsPlaying !== isPlaying) return;
 
-      // Don't correct right after we just applied an action.
       const now = Date.now();
       if (now - lastActionAppliedRef.current < ACTION_GRACE_MS) return;
-
-      // Cooldown: don't correct twice in quick succession.
       if (now - lastDriftCorrectionRef.current < DRIFT_COOLDOWN_MS) return;
 
       const delta = Math.abs(currentTime - video.currentTime);
       if (delta < DRIFT_THRESHOLD_SEC) return;
 
       lastDriftCorrectionRef.current = now;
-      applyRemote(() => { video.currentTime = currentTime; });
+      suppressNext(SUPPRESS_WINDOW_MS);
+      video.currentTime = currentTime;
     };
 
     const onRequestHeartbeat = () => {
@@ -186,7 +185,7 @@ export default function useVideoSync({ socket, videoRef, hasVideo }) {
       socket.off('video:heartbeat', onHeartbeat);
       socket.off('video:request-heartbeat', onRequestHeartbeat);
     };
-  }, [socket, videoRef, applyRemote]);
+  }, [socket, videoRef, suppressNext]);
 
   /* -------------------- Heartbeat loop -------------------- */
   useEffect(() => {
@@ -210,12 +209,16 @@ export default function useVideoSync({ socket, videoRef, hasVideo }) {
       const video = videoRef.current;
       if (!video) return;
       lastActionAppliedRef.current = Date.now();
-      applyRemote(() => {
-        video.currentTime = state.currentTime || 0;
-        if (state.isPlaying) video.play().catch(() => {});
-      });
+      suppressNext(SUPPRESS_WINDOW_MS);
+      video.currentTime = state.currentTime || 0;
+      if (state.isPlaying) {
+        const p = video.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => suppressNext(150)).catch(() => {});
+        }
+      }
     });
-  }, [socket, videoRef, applyRemote]);
+  }, [socket, videoRef, suppressNext]);
 
   return {
     requestSync,

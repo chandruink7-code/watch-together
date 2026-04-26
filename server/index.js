@@ -236,6 +236,6 @@ function leaveCurrentRoom(socket) {
   }
 }
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, () => {
   console.log(`Watch Together server listening on http://localhost:${PORT}`);
 });
